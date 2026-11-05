@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ทดสอบโมเดล YOLO</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Prompt:wght@500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
+<style>
+:root {
+  --bg: #E6ECF0; --panel: #FFFFFF; --ink: #12222E; --soft: #587080; --edge: #C8D3DB;
+  --screen: #0D151B; --screen-ink: #A9BCC9; --shutter: #E0245E; --teal: #0B7F85; --bad: #C42B3A;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0A1015; --panel: #131D25; --ink: #E6EEF3; --soft: #8FA5B4; --edge: #263642;
+    --screen: #05090C; --shutter: #FF4C82; --teal: #35C4CB; --bad: #FF8A94; color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); min-height: 100vh;
+  font: 17px/1.55 "IBM Plex Sans Thai", "Noto Sans Thai", "Leelawadee UI", Tahoma, sans-serif; }
+h1, h2, .num, .seg button, .shutter { font-family: "Prompt", "IBM Plex Sans Thai", sans-serif; }
+:focus-visible { outline: 3px solid var(--teal); outline-offset: 2px; }
+
+.page { max-width: 1180px; margin: 0 auto; padding: 22px 20px 48px; display: grid; gap: 18px; }
+header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 10px 24px; }
+h1 { margin: 0; font-size: 32px; line-height: 1.15; font-weight: 700; }
+.who { color: var(--soft); font-size: 15px; margin-top: 4px; }
+.who b { color: var(--ink); font-weight: 600; }
+.status { font-size: 14px; color: var(--soft); background: var(--panel); border: 1px solid var(--edge);
+  border-radius: 999px; padding: 6px 16px 6px 14px; display: inline-flex; align-items: center; gap: 8px; }
+.status::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--edge); }
+.status.ok::before { background: var(--teal); }
+.status.error { color: var(--bad); border-radius: 14px; }
+.status.error::before { background: var(--bad); }
+
+.body { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 18px; align-items: start; }
+@media (max-width: 860px) { .body { grid-template-columns: 1fr; } }
+
+/* viewfinder */
+.stage { position: relative; background: var(--screen); border-radius: 26px; min-height: 420px;
+  display: grid; place-items: center; overflow: hidden; border: 6px solid var(--ink); }
+.stage.drag { border-color: var(--teal); }
+.stage canvas { display: block; max-width: 100%; height: auto; max-height: 70vh; }
+.empty { text-align: center; padding: 40px 24px; color: var(--screen-ink); }
+.empty p { margin: 0 0 16px; font: 600 22px "Prompt", sans-serif; color: #fff; }
+.empty small { display: block; margin-top: 14px; }
+.busy { position: absolute; inset: 0; display: none; place-items: center; z-index: 3;
+  background: rgba(5, 9, 12, .75); color: #fff; font: 600 20px "Prompt", sans-serif; }
+.stage.working .busy { display: grid; }
+
+.btn { display: inline-block; cursor: pointer; font: 600 15px "IBM Plex Sans Thai", sans-serif;
+  color: var(--ink); background: var(--panel); border: 1.5px solid var(--edge); border-radius: 12px; padding: 9px 16px; }
+.btn:hover:not([aria-disabled="true"]) { border-color: var(--teal); }
+.btn[aria-disabled="true"] { opacity: .4; cursor: not-allowed; }
+.empty .btn { background: transparent; color: #fff; border-color: #fff; }
+input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+
+/* control bar */
+.bar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 14px;
+  background: var(--panel); border: 1px solid var(--edge); border-radius: 22px; padding: 12px 16px; }
+@media (max-width: 560px) { .bar { grid-template-columns: 1fr; justify-items: center; } }
+.seg { display: inline-flex; background: var(--bg); border-radius: 999px; padding: 4px; justify-self: start; }
+.seg button { border: 0; cursor: pointer; font-size: 15px; font-weight: 600; color: var(--soft);
+  background: transparent; border-radius: 999px; padding: 7px 16px; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+.seg button:disabled { opacity: .4; cursor: not-allowed; }
+.shutter { width: 84px; height: 84px; border-radius: 50%; cursor: pointer; border: 5px solid var(--panel);
+  background: var(--shutter); color: #fff; font-size: 15px; font-weight: 600; line-height: 1.2;
+  box-shadow: 0 0 0 3px var(--shutter); transition: transform .12s; }
+.shutter:hover:not(:disabled) { transform: scale(1.05); }
+.shutter:active:not(:disabled) { transform: scale(.95); }
+.shutter:disabled { opacity: .35; cursor: not-allowed; }
+.acts { display: flex; gap: 8px; justify-content: flex-end; justify-self: end; flex-wrap: wrap; }
+.note { margin: 0; font-size: 14px; color: var(--soft); text-align: center; }
+
+/* side panel */
+.side { background: var(--panel); border: 1px solid var(--edge); border-radius: 22px; padding: 20px; display: grid; gap: 16px; }
+.num { font-size: 26px; font-weight: 700; margin: 0; line-height: 1.25; }
+ul.hits { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+ul.hits li { font-size: 15px; display: grid; gap: 4px; }
+ul.hits .t { display: flex; justify-content: space-between; gap: 8px; }
+ul.hits b { font-weight: 600; color: var(--soft); font-variant-numeric: tabular-nums; }
+ul.hits .bar2 { height: 7px; border-radius: 4px; background: var(--bg); overflow: hidden; }
+ul.hits .bar2 i { display: block; height: 100%; border-radius: 4px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 14px; color: var(--soft);
+  border-top: 1px solid var(--edge); padding-top: 14px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+
+.samples h2 { font-size: 16px; font-weight: 600; margin: 0 0 8px; color: var(--soft); }
+.strip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+.strip button { flex: 0 0 auto; width: 112px; height: 80px; padding: 0; border: 3px solid var(--panel);
+  border-radius: 8px; overflow: hidden; cursor: pointer; background: var(--screen); outline: 1px solid var(--edge); }
+.strip button:hover { border-color: var(--teal); }
+.strip img { width: 100%; height: 100%; object-fit: cover; display: block; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div>
+      <h1 id="title">ทดสอบโมเดล YOLO</h1>
+      <div class="who" id="who"></div>
+    </div>
+    <div class="status" id="status">กำลังโหลดโมเดล…</div>
+  </header>
+
+  <div class="body">
+    <main style="display:grid;gap:18px;min-width:0">
+      <div class="stage" id="stage">
+        <div class="empty" id="empty">
+          <p>วางรูปที่นี่ แล้วกดปุ่มสแกน</p>
+          <label class="btn" id="pickBtn" aria-disabled="true">เลือกรูปจากเครื่อง
+            <input type="file" id="file" accept="image/*" disabled>
+          </label>
+          <small>ลากรูปมาวาง หรือกด Ctrl+V ก็ได้ รูปไม่ถูกส่งออกไปไหน ทายในเบราว์เซอร์ทั้งหมด</small>
+        </div>
+        <canvas id="view" hidden></canvas>
+        <div class="busy">AI กำลังสแกน…</div>
+      </div>
+
+      <div class="bar">
+        <div class="seg" role="group" aria-label="แบบของโมเดล">
+          <button type="button" id="modePoly" aria-pressed="true">Polygon</button>
+          <button type="button" id="modeRect" aria-pressed="false" disabled>Rectangle</button>
+        </div>
+        <button class="shutter" id="scanBtn" disabled aria-label="สแกนด้วย AI">สแกน<br>AI</button>
+        <div class="acts">
+          <label class="btn" id="againBtn" hidden>เปลี่ยนรูป
+            <input type="file" id="file2" accept="image/*">
+          </label>
+          <button class="btn" id="saveBtn" hidden>บันทึกรูป</button>
+        </div>
+      </div>
+      <p class="note" id="modeNote">Polygon = ระบายตามรูปทรงวัตถุ (Segment)</p>
+
+      <div class="samples" id="samplesBox" hidden>
+        <h2>รูปตัวอย่าง</h2>
+        <div class="strip" id="strip"></div>
+      </div>
+    </main>
+
+    <aside class="side">
+      <p class="num" id="summary">ยังไม่มีรูป</p>
+      <ul class="hits" id="hits"></ul>
+      <div class="legend" id="legend"></div>
+    </aside>
+  </div>
+</div>
+
+<script>
+const ORT_VER = '1.20.1';
+const PALETTE = ['#E6194B', '#2E9E4F', '#4363D8', '#F58231', '#911EB4', '#16A9C9', '#D63CC9', '#8DB600', '#469990', '#9A6324', '#800000', '#000075'];
+const $ = (s) => document.querySelector(s);
+const sessions = { poly: null, rect: null };
+let mode = 'poly', names = [], S = 640, last = null;
+const CONF = 0.25;
+const MODE_LABEL = { poly: 'Polygon', rect: 'Rectangle' };
+const MODE_NOTE = { poly: 'Polygon = ระบายตามรูปทรงวัตถุ (Segment)', rect: 'Rectangle = ตีกรอบสี่เหลี่ยม (Detect)' };
+
+const color = (c) => PALETTE[c % PALETTE.length];
+const hexRGB = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+
+function setStatus(text, kind) {
+  const el = $('#status'); el.textContent = text; el.className = 'status ' + (kind || '');
+}
+
+async function init() {
+  let info;
+  try {
+    const res = await fetch('model_info.json', { cache: 'no-cache' });
+    if (!res.ok) throw new Error(res.status);
+    info = await res.json();
+  } catch (e) {
+    setStatus('โหลด model_info.json ไม่ได้ ถ้าเปิดไฟล์ index.html จากเครื่องตรงๆ จะใช้ไม่ได้ ต้องเปิดผ่าน GitHub Pages หรือ local server', 'error');
+    return;
+  }
+  names = info.names || []; S = info.imgsz || 640;
+  if (info.title) { $('#title').textContent = info.title; document.title = info.title; }
+  const who = [];
+  if (info.author) who.push(`<b>${info.author}</b>`);
+  if (info.studentId) who.push(info.studentId);
+  if (info.course) who.push(info.course);
+  $('#who').innerHTML = who.join(' · ');
+  $('#legend').innerHTML = names.map((n, i) => `<span><i style="background:${color(i)}"></i>${n}</span>`).join('');
+
+  if (info.samples && info.samples.length) {
+    $('#samplesBox').hidden = false;
+    $('#strip').innerHTML = info.samples.map((s, i) =>
+      `<button type="button" data-src="${s}" aria-label="รูปตัวอย่าง ${i + 1}"><img src="${s}" alt="" loading="lazy"></button>`).join('');
+    $('#strip').addEventListener('click', (e) => {
+      const b = e.target.closest('button'); if (b && sessions[mode]) loadSrc(b.dataset.src);
+    });
+  }
+
+  ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VER}/dist/`;
+  ort.env.wasm.numThreads = 1;
+  const opt = { executionProviders: ['wasm'] };
+  const [poly, rect] = await Promise.allSettled([
+    ort.InferenceSession.create(info.model || 'model.onnx', opt),
+    info.rect_model ? ort.InferenceSession.create(info.rect_model, opt) : Promise.reject(new Error('ไม่มี rect_model')),
+  ]);
+  if (poly.status === 'fulfilled') sessions.poly = poly.value;
+  if (rect.status === 'fulfilled') sessions.rect = rect.value;
+  if (!sessions.poly && !sessions.rect) {
+    setStatus('โหลดโมเดลไม่ได้: ' + (poly.reason?.message || ''), 'error');
+    return;
+  }
+  $('#modePoly').disabled = !sessions.poly;
+  $('#modeRect').disabled = !sessions.rect;
+  if (!sessions.poly) setMode('rect', false);
+  const ready = ['poly', 'rect'].filter((m) => sessions[m]).map((m) => MODE_LABEL[m]).join(' + ');
+  setStatus(`โมเดลพร้อม · ${ready} · ${names.length} class`, 'ok');
+  $('#file').disabled = false; $('#pickBtn').removeAttribute('aria-disabled');
+}
+
+// ---------- preprocess ----------
+function letterbox(img) {
+  const w = img.naturalWidth, h = img.naturalHeight;
+  const r = Math.min(S / w, S / h);
+  const nw = Math.round(w * r), nh = Math.round(h * r);
+  const dx = Math.round((S - nw) / 2 - 0.1), dy = Math.round((S - nh) / 2 - 0.1);
+  const c = document.createElement('canvas'); c.width = S; c.height = S;
+  const x = c.getContext('2d');
+  x.fillStyle = 'rgb(114,114,114)'; x.fillRect(0, 0, S, S);
+  x.drawImage(img, dx, dy, nw, nh);
+  const d = x.getImageData(0, 0, S, S).data, a = S * S, f = new Float32Array(3 * a);
+  for (let i = 0; i < a; i++) {
+    f[i] = d[i * 4] / 255; f[i + a] = d[i * 4 + 1] / 255; f[i + 2 * a] = d[i * 4 + 2] / 255;
+  }
+  return { tensor: new ort.Tensor('float32', f, [1, 3, S, S]), r, dx, dy, nw, nh, w, h };
+}
+
+// ---------- decode (รองรับ YOLOv8/11 และ YOLO26 แบบ end-to-end) ----------
+function decode(det, nm, conf, nc) {
+  const [, a, b] = det.dims, d = det.data, out = [];
+  if (b === 6 + nm && a !== 4 + nc + nm) {
+    for (let i = 0; i < a; i++) {
+      const o = i * b, s = d[o + 4];
+      if (s < conf) continue;
+      out.push({ x1: d[o], y1: d[o + 1], x2: d[o + 2], y2: d[o + 3], score: s, cls: Math.round(d[o + 5]), coef: d.slice(o + 6, o + 6 + nm) });
+    }
+    return out;
+  }
+  const C = 4 + nc + nm, chFirst = a === C, N = chFirst ? b : a;
+  if (!chFirst && b !== C) throw new Error(`output [${det.dims}] ไม่ตรงกับจำนวน class ${nc} ใน model_info.json`);
+  const at = chFirst ? (k, i) => d[k * N + i] : (k, i) => d[i * C + k];
+  for (let i = 0; i < N; i++) {
+    let best = 0, bc = -1;
+    for (let c = 0; c < nc; c++) { const s = at(4 + c, i); if (s > best) { best = s; bc = c; } }
+    if (best < conf) continue;
+    const cx = at(0, i), cy = at(1, i), w = at(2, i), h = at(3, i);
+    const coef = new Float32Array(nm);
+    for (let j = 0; j < nm; j++) coef[j] = at(4 + nc + j, i);
+    out.push({ x1: cx - w / 2, y1: cy - h / 2, x2: cx + w / 2, y2: cy + h / 2, score: best, cls: bc, coef });
+  }
+  return nms(out, 0.45);
+}
+function iou(p, q) {
+  const iw = Math.max(0, Math.min(p.x2, q.x2) - Math.max(p.x1, q.x1));
+  const ih = Math.max(0, Math.min(p.y2, q.y2) - Math.max(p.y1, q.y1));
+  const inter = iw * ih, u = (p.x2 - p.x1) * (p.y2 - p.y1) + (q.x2 - q.x1) * (q.y2 - q.y1) - inter;
+  return u > 0 ? inter / u : 0;
+}
+function nms(boxes, th) {
+  boxes.sort((p, q) => q.score - p.score);
+  const keep = [];
+  for (const b of boxes) {
+    if (keep.every((k) => k.cls !== b.cls || iou(k, b) < th)) keep.push(b);
+    if (keep.length >= 300) break;
+  }
+  return keep;
+}
+
+// ---------- run + draw ----------
+async function infer(m) {
+  if (!last || last.out[m] || !sessions[m]) return;
+  const sess = sessions[m];
+  const t0 = performance.now();
+  const res = await sess.run({ [sess.inputNames[0]]: last.lb.tensor });
+  const ms = performance.now() - t0;
+  let det = null, proto = null;
+  for (const k of sess.outputNames) { const o = res[k]; if (o.dims.length === 4) proto = o; else det = o; }
+  if (m === 'poly' && !proto) throw new Error('โมเดล Polygon ไม่มี mask output (ต้องเป็นรุ่น -seg)');
+  last.out[m] = { det, proto, ms };
+}
+
+async function withBusy(fn) {
+  $('#stage').classList.add('working');
+  await new Promise((r) => setTimeout(r, 20));
+  try { await fn(); } catch (e) { setStatus('ทายไม่สำเร็จ: ' + e.message, 'error'); }
+  finally { $('#stage').classList.remove('working'); }
+}
+
+function run(img) {
+  last = { img, lb: null, out: {}, scanned: false };
+  const k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+  const cv = $('#view');
+  cv.width = Math.round(img.naturalWidth * k); cv.height = Math.round(img.naturalHeight * k);
+  cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+  $('#empty').hidden = true; $('#view').hidden = false;
+  $('#againBtn').hidden = false; $('#saveBtn').hidden = true;
+  $('#scanBtn').disabled = false;
+  $('#summary').textContent = 'พร้อมสแกนแล้ว';
+  $('#hits').innerHTML = '';
+  setStatus('อัปโหลดรูปแล้ว รอสแกน', 'ok');
+}
+
+async function scan() {
+  if (!last) return;
+  $('#scanBtn').disabled = true;
+  await withBusy(async () => {
+    last.lb = last.lb || letterbox(last.img);
+    for (const m of ['poly', 'rect']) await infer(m);
+    last.scanned = true;
+    draw();
+    $('#saveBtn').hidden = false;
+  });
+  $('#scanBtn').disabled = false;
+}
+
+async function setMode(m, rerun = true) {
+  if (!sessions[m]) return;
+  mode = m;
+  $('#modePoly').setAttribute('aria-pressed', m === 'poly');
+  $('#modeRect').setAttribute('aria-pressed', m === 'rect');
+  $('#modeNote').textContent = MODE_NOTE[m];
+  if (rerun && last && last.scanned) await withBusy(async () => { await infer(m); draw(); });
+}
+
+function draw() {
+  if (!last || !last.scanned || !last.out[mode]) return;
+  const { lb, img } = last;
+  const { det, proto, ms } = last.out[mode];
+  const nm = proto ? proto.dims[1] : 0;
+  const boxes = decode(det, nm, CONF, names.length);
+
+  const k = Math.min(1, 1600 / Math.max(lb.w, lb.h));
+  const W = Math.round(lb.w * k), H = Math.round(lb.h * k);
+  const cv = $('#view'), ctx = cv.getContext('2d');
+  cv.width = W; cv.height = H;
+  ctx.drawImage(img, 0, 0, W, H);
+
+  if (mode === 'poly') {
+    const mh = proto.dims[2], mw = proto.dims[3], P = proto.data, area = mh * mw;
+    const m = document.createElement('canvas'); m.width = mw; m.height = mh;
+    const mx = m.getContext('2d'), md = mx.createImageData(mw, mh);
+    const sx = mw / S, sy = mh / S;
+    for (const b of [...boxes].reverse()) {
+      const [r, g, bl] = hexRGB(color(b.cls));
+      const x1 = Math.max(0, Math.floor(b.x1 * sx)), x2 = Math.min(mw, Math.ceil(b.x2 * sx));
+      const y1 = Math.max(0, Math.floor(b.y1 * sy)), y2 = Math.min(mh, Math.ceil(b.y2 * sy));
+      for (let y = y1; y < y2; y++) for (let x = x1; x < x2; x++) {
+        const p = y * mw + x;
+        let s = 0;
+        for (let j = 0; j < nm; j++) s += b.coef[j] * P[j * area + p];
+        if (s > 0) { const q = p * 4; md.data[q] = r; md.data[q + 1] = g; md.data[q + 2] = bl; md.data[q + 3] = 130; }
+      }
+    }
+    mx.putImageData(md, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(m, lb.dx * sx, lb.dy * sy, lb.nw * sx, lb.nh * sy, 0, 0, W, H);
+  }
+
+  const fs = Math.max(13, Math.round(W / 55)), lw = Math.max(2, Math.round(W / 400));
+  ctx.font = `600 ${fs}px "IBM Plex Sans Thai", sans-serif`;
+  ctx.textBaseline = 'top';
+  const toImg = (v, d) => ((v - d) / lb.r) * k;
+  for (const b of boxes) {
+    const x = toImg(b.x1, lb.dx), y = toImg(b.y1, lb.dy);
+    const w = toImg(b.x2, lb.dx) - x, h = toImg(b.y2, lb.dy) - y;
+    const c = color(b.cls);
+    if (mode === 'rect') { ctx.strokeStyle = c; ctx.lineWidth = lw; ctx.strokeRect(x, y, w, h); }
+    const t = `${names[b.cls] ?? b.cls} ${Math.round(b.score * 100)}%`;
+    const tw = ctx.measureText(t).width + fs * 0.6, th = fs * 1.45;
+    const ty = y - th < 0 ? y : y - th;
+    ctx.fillStyle = c; ctx.fillRect(x - lw / 2, ty, tw, th);
+    const [r, g, bl] = hexRGB(c);
+    ctx.fillStyle = r * 0.299 + g * 0.587 + bl * 0.114 > 150 ? '#111' : '#fff';
+    ctx.fillText(t, x + fs * 0.3, ty + fs * 0.2);
+  }
+
+  $('#summary').textContent = boxes.length ? `เจอ ${boxes.length} ชิ้น` : 'ไม่เจอวัตถุที่รู้จักในรูปนี้';
+  $('#hits').innerHTML = boxes.map((b) =>
+    `<li><span class="t"><span>${names[b.cls] ?? b.cls}</span><b>${(b.score * 100).toFixed(1)}%</b></span>` +
+    `<span class="bar2"><i style="width:${(b.score * 100).toFixed(0)}%;background:${color(b.cls)}"></i></span></li>`).join('');
+  setStatus(`${MODE_LABEL[mode]} · ทายเสร็จใน ${Math.round(ms)} ms`, 'ok');
+}
+
+// ---------- input ----------
+function loadSrc(src) {
+  const img = new Image();
+  img.onload = () => run(img);
+  img.onerror = () => setStatus('เปิดรูปนี้ไม่ได้', 'error');
+  img.src = src;
+}
+function loadFile(f) {
+  if (!f || !sessions[mode]) return;
+  if (!f.type.startsWith('image/')) { setStatus('ไฟล์นี้ไม่ใช่รูปภาพ', 'error'); return; }
+  loadSrc(URL.createObjectURL(f));
+}
+$('#file').addEventListener('change', (e) => { loadFile(e.target.files[0]); e.target.value = ''; });
+$('#file2').addEventListener('change', (e) => { loadFile(e.target.files[0]); e.target.value = ''; });
+$('#scanBtn').addEventListener('click', scan);
+$('#modePoly').addEventListener('click', () => setMode('poly'));
+$('#modeRect').addEventListener('click', () => setMode('rect'));
+$('#saveBtn').addEventListener('click', () => {
+  const a = document.createElement('a'); a.download = `yolo_${MODE_LABEL[mode].toLowerCase()}.png`; a.href = $('#view').toDataURL('image/png'); a.click();
+});
+const stage = $('#stage');
+['dragenter', 'dragover'].forEach((t) => stage.addEventListener(t, (e) => { e.preventDefault(); stage.classList.add('drag'); }));
+['dragleave', 'drop'].forEach((t) => stage.addEventListener(t, (e) => { e.preventDefault(); stage.classList.remove('drag'); }));
+stage.addEventListener('drop', (e) => loadFile(e.dataTransfer.files[0]));
+window.addEventListener('paste', (e) => {
+  const it = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith('image/'));
+  if (it) loadFile(it.getAsFile());
+});
+
+init();
+</script>
+</body>
+</html>

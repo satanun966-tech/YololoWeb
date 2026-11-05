@@ -1,0 +1,24 @@
+{
+  "title": "ทดสอบโมเดล YOLO",
+  "model": "model.onnx",
+  "rect_model": "model_rect.onnx",
+  "imgsz": 640,
+  "names": [
+    "zebra",
+    "cat",
+    "person",
+    "car",
+    "airplane"
+  ],
+  "author": "ศตนันทน์ เกตุแย้ม",
+  "studentId": "6806021410159",
+  "course": "DIGITAL IMAGE PROCESSING",
+  "samples": [
+    "samples/1.jpg",
+    "samples/2.jpg",
+    "samples/3.jpg",
+    "samples/4.jpg",
+    "samples/5.jpg",
+    "samples/6.jpg"
+  ]
+}
